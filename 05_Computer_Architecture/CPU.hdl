@@ -1,0 +1,113 @@
+// This file is part of www.nand2tetris.org
+// and the book "The Elements of Computing Systems"
+// by Nisan and Schocken, MIT Press.
+// File name: projects/05/CPU.hdl
+
+/**
+ * The Hack CPU (Central Processing unit), consisting of an ALU,
+ * two registers named A and D, and a program counter named PC.
+ * The CPU is designed to fetch and execute instructions written in 
+ * the Hack machine language. In particular, functions as follows:
+ * Executes the inputted instruction according to the Hack machine 
+ * language specification. The D and A in the language specification
+ * refer to CPU-resident registers, while M refers to the external
+ * memory location addressed by A, i.e. to Memory[A]. The inM input 
+ * holds the value of this location. If the current instruction needs 
+ * to write a value to M, the value is placed in outM, the address 
+ * of the target location is placed in the addressM output, and the 
+ * writeM control bit is asserted. (When writeM==0, any value may 
+ * appear in outM). The outM and writeM outputs are combinational: 
+ * they are affected instantaneously by the execution of the current 
+ * instruction. The addressM and pc outputs are clocked: although they 
+ * are affected by the execution of the current instruction, they commit 
+ * to their new values only in the next time step. If reset==1 then the 
+ * CPU jumps to address 0 (i.e. pc is set to 0 in next time step) rather 
+ * than to the address resulting from executing the current instruction. 
+ */
+
+CHIP CPU {
+
+    IN  inM[16],         // M value input  (M = contents of RAM[A])
+        instruction[16], // Instruction for execution
+        reset;           // Signals whether to re-start the current
+                         // program (reset==1) or continue executing
+                         // the current program (reset==0).
+
+    OUT outM[16],        // M value output
+        writeM,          // Write to M? 
+        addressM[15],    // Address in data memory (of M)
+        pc[15];          // address of next instruction
+
+    PARTS:
+	// Mux
+	Mux16(a = instruction, b = ALUout, sel = instruction[15], out = InA);
+	Mux16(a = OutA, b = inM, sel = instruction[12], out = Y);
+	
+    // Program Counter
+	PC(in = OutA, load = PCLoadC, inc = true, reset = reset, out[0..14] = pc);
+	//PCLoadLogic(cinstr = , j1 = , j2 = , j3 = , load = , inc = );
+	
+	// Registers
+	ARegister(in = InA, load = AregC, out = OutA, out[0..14] = addressM);
+	DRegister(in = ALUout, load = DregC, out = X);
+	
+	// ALU
+	ALU(x = X, y = Y, zx = instruction[11], nx = instruction[10], zy = instruction[9], ny = instruction[8], 
+	f = instruction[7], no = instruction[6], out = outM, out = ALUout, zr = ZeroSignal, ng = NegSignal);
+	
+	//-----------------------------------------------------------
+	// Control Signals:
+	
+	// 1) Some info:
+	// A-instruction
+	// instruction[15]: opcode = 0
+	
+	// C-instruction
+	// instruction[15]: opcode = 1
+	// instruction[14]: unused
+	// instruction[13]: unused
+	// instruction[12]: a
+	// instruction[11]: c1 = zx
+	// instruction[10]: c2 = nx
+	// instruction[9]: c3 = zy
+	// instruction[8]: c4 = ny
+	// instruction[7]: c5 = f
+	// instruction[6]: c6 = no
+	// instruction[5]: d1
+	// instruction[4]: d2
+	// instruction[3]: d3
+	// instruction[2]: j1
+	// instruction[1]: j2
+	// instruction[0]: j3
+	//-----------------------------------------------------------
+	
+	// 2) A-register: input = InA
+	Not(in = instruction[15], out = AregCa);
+	And(a = instruction[15], b = instruction[5], out = AregCb);
+	Or(a = AregCa, b = AregCb, out = AregC);
+	//-----------------------------------------------------------
+	
+	// 3) D-register: input = ALUout
+	And(a = instruction[15], b = instruction[4], out = DregC);
+	//-----------------------------------------------------------
+	
+	// 4) RAM (writeM)
+	And(a = instruction[15], b = instruction[3], out = writeM);
+	//-----------------------------------------------------------
+	
+	
+	// 5) Program Counter
+	And(a = instruction[15], b = JumpSignal, out = PCLoadC); // jump exists in c-instructions only
+	And(a = instruction[1], b = ZeroSignal, out = JEQ); // JEQ(out == 0) = j2 . zr
+	And(a = instruction[2], b = NegSignal, out = JLT); // JLT(out < 0) = j1 . ng
+	
+	Or(a = ZeroSignal, b = NegSignal, out = ZrOrNg);
+	Not(in = ZrOrNg, out = notZrOrNg);
+	And(a = instruction[0], b = notZrOrNg, out = JGT); // JGT(out > 0) = j3 . Not(zr + ng)
+	
+	Mux(a = false, b = JLT, sel = instruction[2], out = j1MuxOut); // sel = j1
+	Mux(a = false, b = JEQ, sel = instruction[1], out = j2MuxOut); // sel = j2
+	Mux(a = false, b = JGT, sel = instruction[0], out = j3MuxOut); // sel = j3
+	Or(a = j1MuxOut, b = j2MuxOut, out = j1orj2);
+	Or(a = j1orj2, b = j3MuxOut, out = JumpSignal);	// Detecting jump (cond. or uncond.)
+}
